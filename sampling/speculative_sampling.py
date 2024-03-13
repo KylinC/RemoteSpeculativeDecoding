@@ -127,6 +127,7 @@ def speculative_sampling_v2(prefix : torch.Tensor, approx_model : torch.nn.Modul
         torch.Tensor: generated tokens (batch, target_seqlen)
     """
     seq_len = prefix.shape[1]
+    print("prefix.shape",prefix.shape)
     T = seq_len + max_len
     
     assert prefix.shape[0] == 1, "input batch size must be 1"
@@ -147,12 +148,13 @@ def speculative_sampling_v2(prefix : torch.Tensor, approx_model : torch.nn.Modul
             for i in range(q.shape[1]):
                 q[:,i,:] = norm_logits(q[:,i,:],
                                 temperature, top_k, top_p)
+            # print("q.shape",q.shape)
             # p  = M_p[prefix + x_0, x_0, .., x_(gamma-1)]
             p = target_model(x).logits
             for i in range(p.shape[1]):
                 p[:,i,:] = norm_logits(p[:,i,:],
                                 temperature, top_k, top_p)
-
+            # print("p.shape",p.shape)
             # n the end position of the valid prefix
             # x = x_[:prefix_len-1] + x_0, ... x_(gamma-1)
             
@@ -166,15 +168,17 @@ def speculative_sampling_v2(prefix : torch.Tensor, approx_model : torch.nn.Modul
                 
                 if r < torch.min(torch.tensor([1], device=q.device), p[:, prefix_len + i - 1, j] / q[:, prefix_len + i - 1, j]):
                     # accept, and update n
-                    n += 1
+                    n += 1 
                 else:
                     # reject
+                    print(f"reject {n+1}")
                     t = sample(max_fn(p[:, n, :] - q[:, n, :]))
                     is_all_accept = False
                     break
          
             prefix = x[:, :n + 1]
             
+            # all accept之后就从最后一个位置采样
             if is_all_accept:
                 t = sample(p[:, -1, :])
             
