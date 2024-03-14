@@ -150,7 +150,9 @@ def speculative_sampling_v2(prefix : torch.Tensor, approx_model : torch.nn.Modul
                                 temperature, top_k, top_p)
             # print("q.shape",q.shape)
             # p  = M_p[prefix + x_0, x_0, .., x_(gamma-1)]
+            
             p = target_model(x).logits
+            print("p.device",p.device)
             for i in range(p.shape[1]):
                 p[:,i,:] = norm_logits(p[:,i,:],
                                 temperature, top_k, top_p)
