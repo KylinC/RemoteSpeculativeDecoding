@@ -1,7 +1,7 @@
 import torch
 from flask import Flask, request, jsonify
 from flask_cors import CORS
-import ngrok
+# import ngrok
 import logging
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
@@ -113,5 +113,7 @@ class ServerModel:
         self.app.run(host='0.0.0.0', port=5000)
 
 if __name__ == "__main__":
-    app = ServerModel(model_name="bigscience/bloomz-7b1")
+    model_name = "/archive/share/hogura/models/opt-2.7b"
+    # model_name="bigscience/bloomz-7b1"
+    app = ServerModel(model_name=model_name)
     app.run_flask()

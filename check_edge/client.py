@@ -119,8 +119,15 @@ class ClientModel:
         print(processed_tensor.shape)
         return processed_tensor
     
-model = ClientModel(server_url="http://192.168.31.230:5000",model_name="bigscience/bloom-560m")
-# print(model.generate_from_server("Are you ok?"))
+# model_name = "bigscience/bloom-560m"
+model_name = "/home/share/opt-125m"
+server_url = "http://dell08:5000"
+prompts = "Are you ok?"
+
+model = ClientModel(server_url=server_url, 
+                    model_name=model_name)
+print(model.generate_from_server(prompts))
+
 import IPython; IPython.embed(); exit(1)
 
 # def send_tensor_to_server(tensor, server_url):
