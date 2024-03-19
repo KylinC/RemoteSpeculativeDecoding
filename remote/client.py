@@ -5,6 +5,8 @@ import tqdm
 from transformers import AutoTokenizer, AutoModelForCausalLM
 from utils import norm_logits, sample, max_fn
 
+from typing import Tuple
+
 logging.basicConfig(level=logging.INFO)
 
 class ClientModel:
@@ -33,19 +35,61 @@ class ClientModel:
         return generated_text
     
     def generate_with_server(self, prompt:str,  max_len : int = 20 , gamma : int = 4,
-                         temperature : float = 1, top_k : int = 0, top_p : float = 0, random_seed : int = None)->str:
+                         temperature : float = 1, top_k : int = 0, top_p : float = 0, 
+                         random_seed : int = None, strategy: str = "greedy")->str:
+        
+        '''
+        strategy: ["greedy", "speculative"]
+        '''
+        
         prefix = self._tokenizer.encode(prompt, return_tensors='pt').to(self._device)
-        output = self._spec_smapling(prefix, max_len, gamma, temperature, top_k, top_p, random_seed)
+        
+        if strategy == "greedy":
+            output = self._block_decoding(prefix, max_len, gamma)
+        elif strategy == "speculative":
+            output = self._spec_smapling(prefix, max_len, gamma, temperature, top_k, top_p, random_seed)
+        else:
+            raise ValueError("Strategy Undefined")
+        
         generated_text = self._tokenizer.decode(output[0], skip_special_tokens=True)
         return generated_text
     
-    # verify on server
-    def generate_with_server_check(self, prompt:str,  max_len : int = 20 , gamma : int = 4,
-                         temperature : float = 1, top_k : int = 0, top_p : float = 0, random_seed : int = None)->str:
-        prefix = self._tokenizer.encode(prompt, return_tensors='pt')
-        output = self._spec_tokens(prefix, max_len, gamma, temperature, top_k, top_p, random_seed)
-        generated_text = self._tokenizer.decode(output[0], skip_special_tokens=True)
-        return generated_text
+    def _block_decoding(self, prefix : torch.Tensor, max_len : int , gamma : int = 4) -> torch.Tensor:
+        seq_len = prefix.shape[1]
+        T = seq_len + max_len
+        
+        assert prefix.shape[0] == 1, "input batch size must be 1"
+        
+        while prefix.shape[1] < T:
+            x = prefix
+            prefix_len = prefix.shape[1]
+            x = self._model.generate(x, max_length=prefix_len + gamma)
+            
+            prefix = self._spec_tokens(x, prefix_len, gamma)
+            # y = target_model(x).logits.argmax(dim=2)
+            # n = prefix_len - 1
+            # for _ in range(gamma):
+            #     if y[0][n]==x[0][n+1]:
+            #         # accept, and update n
+            #         n += 1 
+            #     else:
+            #         # reject
+            #         print(f"reject {n+1}")
+            #         x[0][n+1] = y[0][n]
+            #         break
+        
+            # prefix = x[:, :n + 2]
+
+        return prefix
+    
+    def _spec_tokens(self, ids:torch.Tensor, prefix_len:int, gamma:int)->torch.Tensor:
+        if ids.device!="cpu":
+            ids = ids.cpu()
+        data = {"ids": ids.tolist(), "prefix_len": prefix_len, "gamma": gamma}
+        response = requests.post(f"{self.server_url}/spec_tokens", json=data)
+        checked_ids = torch.tensor(response.json()["ids"]).to(self._device)
+        # print(processed_tensor.shape)
+        return checked_ids
         
     def _spec_smapling(self, prefix:torch.Tensor,  max_len : int = 20 , gamma : int = 4,
                          temperature : float = 1, top_k : int = 0, top_p : float = 0, random_seed : int = None)->torch.Tensor:
@@ -103,14 +147,6 @@ class ClientModel:
             prefix = torch.cat((prefix, t), dim=1)
             
         return prefix
-
-    def _spec_tokens(self, prefix:torch.Tensor,  max_len : int = 20 , gamma : int = 4,
-                         temperature : float = 1, top_k : int = 0, top_p : float = 0, random_seed : int = None)->torch.Tensor:
-        data = {"prefix": prefix.tolist()}
-        # response = requests.post(f"{self.server_url}/spec_logits", json=data)
-        # processed_tensor = torch.tensor(response.json()["logits"]).to(self._device)
-        # print(processed_tensor.shape)
-        # return processed_tensor
         
     def _spec_logits(self, tensor:torch.Tensor)->torch.Tensor:
         data = {"ids": tensor.tolist()}
