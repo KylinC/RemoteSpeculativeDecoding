@@ -3,7 +3,7 @@ import requests
 import logging
 import tqdm
 from transformers import AutoTokenizer, AutoModelForCausalLM
-from utils import norm_logits, sample, max_fn
+from utils import norm_logits, sample, max_fn, timer
 
 logging.basicConfig(level=logging.INFO)
 
@@ -35,7 +35,7 @@ class ClientModel:
     def generate_with_server(self, prompt:str,  max_len : int = 20 , gamma : int = 4,
                          temperature : float = 1, top_k : int = 0, top_p : float = 0, random_seed : int = None)->str:
         prefix = self._tokenizer.encode(prompt, return_tensors='pt').to(self._device)
-        output = self._spec_smapling(prefix, max_len, gamma, temperature, top_k, top_p, random_seed)
+        output = self._spec_sampling(prefix, max_len, gamma, temperature, top_k, top_p, random_seed)
         generated_text = self._tokenizer.decode(output[0], skip_special_tokens=True)
         return generated_text
     
@@ -47,7 +47,7 @@ class ClientModel:
         generated_text = self._tokenizer.decode(output[0], skip_special_tokens=True)
         return generated_text
         
-    def _spec_smapling(self, prefix:torch.Tensor,  max_len : int = 20 , gamma : int = 4,
+    def _spec_sampling(self, prefix:torch.Tensor,  max_len : int = 20 , gamma : int = 4,
                          temperature : float = 1, top_k : int = 0, top_p : float = 0, random_seed : int = None)->torch.Tensor:
         seq_len = prefix.shape[1]
         T = seq_len + max_len
@@ -58,22 +58,26 @@ class ClientModel:
             # p = M_p[prefix + x_0, x_1, .., x_(gamma-2)]
             x = prefix
             prefix_len = prefix.shape[1]
+            timer(None)
             for _ in range(gamma):
                 # p.logits shape (batch, seq, vocab)
                 p = self._model(x).logits
                 next_tok = sample(norm_logits(p[:, -1, :], 
                                 temperature, top_k, top_p))
                 x = torch.cat((x, next_tok), dim=1)
+            timer("sampling")
             
             # normalize the logits
             for i in range(p.shape[1]):
                 p[:,i,:] = norm_logits(p[:,i,:],
                                 temperature, top_k, top_p)
+            timer("normalize")
             # q  = M_q[prefix + x_0, x_0, .., x_(gamma-1)]
             q = self._spec_logits(x)
             for i in range(q.shape[1]):
                 q[:,i,:] = norm_logits(q[:,i,:],
                                 temperature, top_k, top_p)
+            timer("spec_logits")
 
             # n the end position of the valid prefix
             # x = x_[:prefix_len-1] + x_0, ... x_(gamma-1)
@@ -94,13 +98,14 @@ class ClientModel:
                     t = sample(max_fn(q[:, n, :] - p[:, n, :]))
                     is_all_accept = False
                     break
-        
+            timer("verify")
             prefix = x[:, :n + 1]
             
             if is_all_accept:
                 t = sample(q[:, -1, :])
             
             prefix = torch.cat((prefix, t), dim=1)
+            timer("result")
             
         return prefix
 

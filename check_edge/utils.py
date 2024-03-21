@@ -1,6 +1,8 @@
 import torch
 from torch.nn import functional as F
 
+import time
+
 # copy from https://github.com/LeeSinLiang/microGPT/blob/ed40cf9780dbeb180adfe94c227d4aa97e69250e/gpt.py
 def top_k_top_p_filter(logits: torch.Tensor, top_k: int = 0, top_p: float = 0.0):
     """
@@ -61,3 +63,12 @@ def max_fn(x):
     x_max = torch.where(x > 0, x, torch.zeros_like(x))
     x_max_sum = torch.sum(x_max, dim=1, keepdim=True) 
     return x_max / x_max_sum
+
+timer_time = None
+
+def timer(msg):
+    global timer_time
+    if msg is not None and timer_time is not None:
+        print(msg, time.time() - timer_time)
+    timer_time = time.time()
+    return timer_time
