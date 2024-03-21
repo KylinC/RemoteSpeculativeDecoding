@@ -1,9 +1,9 @@
 import torch
 from flask import Flask, request, jsonify
 from flask_cors import CORS
-import ngrok
 import logging
 from transformers import AutoModelForCausalLM, AutoTokenizer
+from utils import get_timer_stats, timer, update_timer, clear_timer_stats
 
 logging.basicConfig(level=logging.INFO)
 
@@ -23,11 +23,14 @@ class ServerModel:
         logging.info("fininsh load models")
         
     def spec_tokens(self)->str:
+        clear_timer_stats()
         data = request.get_json()
+        timer("get_json")
         # print("data",data)
         x,prefix_len,gamma = torch.tensor(data["ids"]).to(self._device),int(data["prefix_len"]),int(data["gamma"])
         y = self._model(x).logits.argmax(dim=2)
         n = prefix_len - 1
+        timer("cpu->gpu")
         for _ in range(gamma):
             if y[0][n]==x[0][n+1]:
                 # accept, and update n
@@ -37,17 +40,24 @@ class ServerModel:
                 print(f"reject {n+1}")
                 x[0][n+1] = y[0][n]
                 break
-    
+        timer("verify (greedy)")
         ids = x[:, :n + 2].to('cpu')
-        return jsonify({"ids": ids.tolist()})
+        timer("gpu->cpu")
+        return jsonify({"ids": ids.tolist(), "stats": get_timer_stats()})
     
     def generate_to_client(self)->str:
+        clear_timer_stats()
+        timer(None)
         data = request.get_json()
+        timer("get_json")
         prompt,max_len,num_return_sequences = str(data["prompt"]),int(data["max_length"]),int(data["num_return_sequences"])
         input_ids = self._tokenizer.encode(prompt, return_tensors='pt').to(self._device)
+        timer("decode")
         output = self._model.generate(input_ids, max_length=max_len, num_return_sequences=num_return_sequences)
+        timer("generate")
         generated_text = self._tokenizer.decode(output[0], skip_special_tokens=True)
-        return jsonify({"generated_text": generated_text})
+        timer("decode")
+        return jsonify({"generated_text": generated_text, "stats": get_timer_stats()})
     
     def spec_logits(self):
         data = request.get_json()
@@ -70,5 +80,5 @@ class ServerModel:
         self.app.run(host='0.0.0.0', port=5000)
 
 if __name__ == "__main__":
-    app = ServerModel(model_name="bigscience/bloomz-7b1")
+    app = ServerModel(model_name="/archive/share/hogura/models/opt-2.7b")
     app.run_flask()

@@ -63,7 +63,9 @@ class ClientModel:
         while prefix.shape[1] < T:
             x = prefix
             prefix_len = prefix.shape[1]
+            timer(None)
             x = self._model.generate(x, max_length=prefix_len + gamma)
+            timer("generate")
             
             prefix = self._spec_tokens(x, prefix_len, gamma)
             # y = target_model(x).logits.argmax(dim=2)
@@ -83,11 +85,16 @@ class ClientModel:
         return prefix
     
     def _spec_tokens(self, ids:torch.Tensor, prefix_len:int, gamma:int)->torch.Tensor:
+        timer(None)
         if ids.device!="cpu":
             ids = ids.cpu()
         data = {"ids": ids.tolist(), "prefix_len": prefix_len, "gamma": gamma}
+        timer("gpu->cpu (client)")
         response = requests.post(f"{self.server_url}/spec_tokens", json=data)
+        timer("post")
+        msg = response.json()
         checked_ids = torch.tensor(response.json()["ids"]).to(self._device)
+        timer("cpu->gpu (client)")
         # print(processed_tensor.shape)
         return checked_ids
         
