@@ -77,7 +77,6 @@ class ClientModel:
             for i in range(q.shape[1]):
                 q[:,i,:] = norm_logits(q[:,i,:],
                                 temperature, top_k, top_p)
-            timer("spec_logits")
 
             # n the end position of the valid prefix
             # x = x_[:prefix_len-1] + x_0, ... x_(gamma-1)
@@ -118,22 +117,27 @@ class ClientModel:
         # return processed_tensor
         
     def _spec_logits(self, tensor:torch.Tensor)->torch.Tensor:
+        timer(None)
         data = {"ids": tensor.tolist()}
         response = requests.post(f"{self.server_url}/spec_logits", json=data)
+        timer("post")
         processed_tensor = torch.tensor(response.json()["logits"]).to(self._device)
+        timer("cpu->gpu")
         print(processed_tensor.shape)
         return processed_tensor
     
 # model_name = "bigscience/bloom-560m"
 model_name = "/home/share/opt-125m"
-server_url = "http://dell08:5000"
-prompts = "Are you ok?"
+server_url = "http://202.205.2.250:5000"
+prompts = "How do you think the weather today?"
 
 model = ClientModel(server_url=server_url, 
                     model_name=model_name)
-print(model.generate_from_server(prompts))
+print(model.generate_with_server(prompts))
 
-import IPython; IPython.embed(); exit(1)
+exit(1)
+
+# import IPython; IPython.embed(); exit(1)
 
 # def send_tensor_to_server(tensor, server_url):
 #     data = {"tensor": tensor.tolist()}
