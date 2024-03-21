@@ -65,10 +65,31 @@ def max_fn(x):
     return x_max / x_max_sum
 
 timer_time = None
+timer_dict = {}
 
 def timer(msg):
-    global timer_time
+    global timer_time, timer_dict
     if msg is not None and timer_time is not None:
-        print(msg, time.time() - timer_time)
+        elapsed = time.time() - timer_time
+        print(msg, elapsed)
+        if msg in timer_dict:
+            timer_dict[msg] += elapsed
+        else:
+            timer_dict[msg] = elapsed
     timer_time = time.time()
     return timer_time
+
+def update_timer(name, t):
+    global timer_dict
+    if name not in timer_dict:
+        timer_dict[name] = t
+    else:
+        timer_dict[name] += t
+
+def get_timer_stats():
+    global timer_dict
+    return timer_dict
+
+def clear_timer_stats():
+    global timer_dict
+    timer_dict = {}

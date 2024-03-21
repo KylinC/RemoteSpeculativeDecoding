@@ -4,6 +4,7 @@ from flask_cors import CORS
 # import ngrok
 import logging
 from transformers import AutoModelForCausalLM, AutoTokenizer
+from utils import timer, clear_timer_stats, get_timer_stats
 
 class ServerModel:
     def __init__(self,model_name):
@@ -93,14 +94,23 @@ class ServerModel:
         return prefix
     
     def spec_logits(self):
+        clear_timer_stats()
+
+        timer(None)
         data = request.get_json()
+        timer("get_json")
         tensor = torch.tensor(data["ids"])
         tensor = tensor.to(self._device)
+        timer("cpu->gpu (server)")
         
         processed_tensor = self._model(tensor).logits
+        
+        timer("spec_logits_server")
 
         tensor = processed_tensor.to('cpu')
-        return jsonify({"logits": processed_tensor.tolist()})
+        timer("gpu->cpu (server)")
+
+        return jsonify({"logits": processed_tensor.tolist(), "stats": get_timer_stats()})
 
     def run(self):
         ngrok.set_auth_token("2dc4TnEqtiVYGQXQBvd9rlGlwO9_4firMqSZLE1LiPmkYBaEj")

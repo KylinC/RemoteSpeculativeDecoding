@@ -3,7 +3,7 @@ import requests
 import logging
 import tqdm
 from transformers import AutoTokenizer, AutoModelForCausalLM
-from utils import norm_logits, sample, max_fn, timer
+from utils import norm_logits, sample, max_fn, timer, get_timer_stats, update_timer
 
 logging.basicConfig(level=logging.INFO)
 
@@ -120,9 +120,14 @@ class ClientModel:
         timer(None)
         data = {"ids": tensor.tolist()}
         response = requests.post(f"{self.server_url}/spec_logits", json=data)
+        msg = response.json()
         timer("post")
-        processed_tensor = torch.tensor(response.json()["logits"]).to(self._device)
-        timer("cpu->gpu")
+        processed_tensor = torch.tensor(msg["logits"]).to(self._device)
+        timer("cpu->gpu (client)")
+
+        for name, t in msg["timers"].items():
+            update_timer(name, t)
+
         print(processed_tensor.shape)
         return processed_tensor
     
@@ -134,6 +139,9 @@ prompts = "How do you think the weather today?"
 model = ClientModel(server_url=server_url, 
                     model_name=model_name)
 print(model.generate_with_server(prompts))
+
+stats = get_timer_stats()
+print(stats)
 
 exit(1)
 
