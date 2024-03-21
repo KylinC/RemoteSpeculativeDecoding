@@ -125,7 +125,7 @@ class ClientModel:
         processed_tensor = torch.tensor(msg["logits"]).to(self._device)
         timer("cpu->gpu (client)")
 
-        for name, t in msg["timers"].items():
+        for name, t in msg["stats"].items():
             update_timer(name, t)
 
         print(processed_tensor.shape)
