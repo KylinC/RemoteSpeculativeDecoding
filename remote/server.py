@@ -24,13 +24,14 @@ class ServerModel:
         
     def spec_tokens(self)->str:
         clear_timer_stats()
+        timer(None)
         data = request.get_json()
         timer("get_json")
         # print("data",data)
         x,prefix_len,gamma = torch.tensor(data["ids"]).to(self._device),int(data["prefix_len"]),int(data["gamma"])
+        timer("cpu->gpu (server)")
         y = self._model(x).logits.argmax(dim=2)
         n = prefix_len - 1
-        timer("cpu->gpu")
         for _ in range(gamma):
             if y[0][n]==x[0][n+1]:
                 # accept, and update n
@@ -42,7 +43,7 @@ class ServerModel:
                 break
         timer("verify (greedy)")
         ids = x[:, :n + 2].to('cpu')
-        timer("gpu->cpu")
+        timer("gpu->cpu (server)")
         return jsonify({"ids": ids.tolist(), "stats": get_timer_stats()})
     
     def generate_to_client(self)->str:

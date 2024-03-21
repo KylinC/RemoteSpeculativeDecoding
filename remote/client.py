@@ -93,8 +93,10 @@ class ClientModel:
         response = requests.post(f"{self.server_url}/spec_tokens", json=data)
         timer("post")
         msg = response.json()
-        checked_ids = torch.tensor(response.json()["ids"]).to(self._device)
+        checked_ids = torch.tensor(msg["ids"]).to(self._device)
         timer("cpu->gpu (client)")
+        for name, t in msg["stats"].items():
+            update_timer(name, t)
         # print(processed_tensor.shape)
         return checked_ids
         
