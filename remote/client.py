@@ -4,6 +4,7 @@ import logging
 import tqdm
 from transformers import AutoTokenizer, AutoModelForCausalLM
 from utils import norm_logits, sample, max_fn, timer, get_timer_stats, update_timer
+from pympler.asizeof import asizeof
 
 from typing import Tuple
 
@@ -91,6 +92,7 @@ class ClientModel:
         data = {"ids": ids.tolist(), "prefix_len": prefix_len, "gamma": gamma}
         timer("gpu->cpu (client)")
         response = requests.post(f"{self.server_url}/spec_tokens", json=data)
+        print("comm data size", asizeof(data) + asizeof(response))
         timer("post")
         msg = response.json()
         checked_ids = torch.tensor(msg["ids"]).to(self._device)
