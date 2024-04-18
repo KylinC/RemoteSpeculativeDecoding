@@ -204,14 +204,15 @@ class AsyncServer:
 
     def __init__(self, model_name) -> None:
         self._device = 'cuda' if torch.cuda.is_available() else 'cpu'
-        self._model = AutoModelForCausalLM.from_pretrained(model_name,
-                                                           torch_dtype=torch.float16,
-                                                           trust_remote_code=True).to(self._device)                                                   
+        self._model: OPTModel = AutoModelForCausalLM.from_pretrained(model_name,
+                                                                     torch_dtype=torch.float16,
+                                                                     trust_remote_code=True).to(self._device)                                                   
         logging.info(f"loaded model: {model_name}")
 
         self._tokenizer = AutoTokenizer.from_pretrained(model_name)
         self._server_stop_flag: asyncio.Future
         self._sync_wrapper = AsyncWrapper()
+        self._kv_cache: Optional[torch.Tensor] = None
 
     def spec_tokens(self, msg: WsMsg):
         print("spec_tokens len:", msg.prefix_len)
@@ -221,7 +222,7 @@ class AsyncServer:
 
         # TODO: reuse the kvcache
         with torch.no_grad():
-            y = self._model(x).logits.argmax(dim=2)
+            y = self._model(x, use_cache=True, past_key_values=self._kv_cache).logits.argmax(dim=2)
 
         n = prefix_len - 1
         flag = False
