@@ -62,12 +62,14 @@ async def dump_ws_msg(flag: bool,
                       x: Optional[torch.Tensor],
                       prefix_len: Optional[int] = None,
                       gamma: Optional[int] = None) -> bytes:
+    print("dumping data")
     if x is not None and x.device.type != "cpu":
         y = await copy_gpu2cpu(x)
         msg = WsMsg(flag, y, prefix_len, gamma, time_stamp)
     else:
         msg = WsMsg(flag, x, prefix_len, gamma, time_stamp)
     data = pickle.dumps(msg)
+    print("dumped data")
     return data
 
 
@@ -212,6 +214,7 @@ class AsyncServer:
         self._sync_wrapper = AsyncWrapper()
 
     def spec_tokens(self, msg: WsMsg):
+        print("spec_tokens len:", msg.prefix_len)
         x, prefix_len, gamma = msg.ids, msg.prefix_len, msg.gamma
         if x.device != self._model.device:
             x = x.to(self._model.device)
@@ -242,11 +245,14 @@ class AsyncServer:
 
         async def server_handler(ws: WSServer):
             ts = 0
+
+            banned: Dict[int, bool] = {}
             async for data in ws:
                 msg = load_ws_msg(data)
+                print("receive drafted length:", msg.prefix_len)
                 if msg.time_stamp > ts:
                     ts = msg.time_stamp
-                elif msg.time_stamp < ts:
+                elif msg.time_stamp < ts or ts in banned:
                     print("current ts,", ts, "ignore pack with ts", msg.time_stamp)
                     continue
 
@@ -255,8 +261,11 @@ class AsyncServer:
                     args = (msg, ),
                     event_loop = asyncio.get_event_loop()
                 )
+                if flag:
+                    banned[ts] = True
 
                 await ws.send(await dump_ws_msg(flag, ts, ids))
+                print("sent results:", ts, ids.shape[1])
 
         async with serve(server_handler, config.WS_SERVER_ADDR, config.WS_SERVER_PORT):
             await self._server_stop_flag
