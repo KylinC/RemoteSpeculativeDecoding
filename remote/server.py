@@ -1,9 +1,14 @@
 import torch
+import logging
+import os
+import config
+
 from flask import Flask, request, jsonify
 from flask_cors import CORS
-import logging
+
 from transformers import AutoModelForCausalLM, AutoTokenizer
 from utils import get_timer_stats, timer, update_timer, clear_timer_stats
+from remote.async_decoder import AsyncServer
 
 logging.basicConfig(level=logging.INFO)
 
@@ -81,5 +86,7 @@ class ServerModel:
         self.app.run(host='0.0.0.0', port=5000)
 
 if __name__ == "__main__":
-    app = ServerModel(model_name="/archive/share/hogura/models/opt-2.7b")
-    app.run_flask()
+    # app = ServerModel(model_name="/archive/share/hogura/models/opt-2.7b")
+    # app.run_flask()
+    app = AsyncServer(os.path.join(config.MODEL_ZOO_DIR, "opt-2.7b"))
+    app.run_server()

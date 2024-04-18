@@ -2,9 +2,16 @@ import torch
 import requests
 import logging
 import tqdm
+import asyncio
+import config
+import os
+
 from transformers import AutoTokenizer, AutoModelForCausalLM
+from transformers.models.opt import OPTForCausalLM
 from utils import norm_logits, sample, max_fn, timer, get_timer_stats, update_timer
+from time import time
 from pympler.asizeof import asizeof
+from async_decoder import AsyncClient
 
 from typing import Tuple
 
@@ -15,7 +22,7 @@ class ClientModel:
         self.server_url = server_url
         self._device = 'cuda' if torch.cuda.is_available() else 'cpu'
         logging.info("begin load models")
-        self._model = AutoModelForCausalLM.from_pretrained(model_name, trust_remote_code=True).to(self._device)
+        self._model: OPTForCausalLM = AutoModelForCausalLM.from_pretrained(model_name, trust_remote_code=True).to(self._device)
         self._tokenizer = AutoTokenizer.from_pretrained(model_name)
         logging.info("fininsh load models")
         
@@ -49,13 +56,18 @@ class ClientModel:
             output = self._block_decoding(prefix, max_len, gamma)
         elif strategy == "speculative":
             output = self._spec_sampling(prefix, max_len, gamma, temperature, top_k, top_p, random_seed)
+        elif strategy == "async":
+            # output = asyncio.run(self._async_block_decoding(prefix, max_len, gamma))
+            output = AsyncClient(self.server_url, self._model).decode(prefix, max_len, gamma)
         else:
             raise ValueError("Strategy Undefined")
         
         generated_text = self._tokenizer.decode(output[0], skip_special_tokens=True)
         return generated_text
-    
-    def _block_decoding(self, prefix : torch.Tensor, max_len : int , gamma : int = 4) -> torch.Tensor:
+        
+    def _block_decoding(self, 
+                        prefix: torch.Tensor, max_len: int, 
+                        gamma: int = 4) -> torch.Tensor:
         seq_len = prefix.shape[1]
         T = seq_len + max_len
         
@@ -69,19 +81,6 @@ class ClientModel:
             timer("generate")
             
             prefix = self._spec_tokens(x, prefix_len, gamma)
-            # y = target_model(x).logits.argmax(dim=2)
-            # n = prefix_len - 1
-            # for _ in range(gamma):
-            #     if y[0][n]==x[0][n+1]:
-            #         # accept, and update n
-            #         n += 1 
-            #     else:
-            #         # reject
-            #         print(f"reject {n+1}")
-            #         x[0][n+1] = y[0][n]
-            #         break
-        
-            # prefix = x[:, :n + 2]
 
         return prefix
     
@@ -179,16 +178,20 @@ class ClientModel:
         return processed_tensor
     
 # model_name = "bigscience/bloom-560m"
-model_name = "/home/share/opt-125m"
-server_url = "http://202.205.2.250:5000"
+model_name = os.path.join(config.MODEL_ZOO_DIR, "opt-125m")
+# server_url = "http://202.205.2.250:5000"
+server_url = f"ws://{config.WS_SERVER_ADDR}:{config.WS_SERVER_PORT}"
 prompts = "How do you think the weather today?"
 
 model = ClientModel(server_url=server_url, 
                     model_name=model_name)
-print(model.generate_with_server(prompts))
+st = time()
+print(model.generate_with_server(prompts, strategy="async"))
+ed = time() - st
 
 stats = get_timer_stats()
 print(stats)
+print("total:", ed)
 
 exit(1)
 
