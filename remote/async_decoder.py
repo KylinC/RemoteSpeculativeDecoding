@@ -8,6 +8,7 @@ import logging
 import websockets
 
 from transformers.models.opt import OPTModel
+from transformers.modeling_outputs import CausalLMOutputWithPast
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
 from websockets import WebSocketClientProtocol as WSClient, WebSocketServerProtocol as WSServer, connect, serve
@@ -222,7 +223,10 @@ class AsyncServer:
 
         # TODO: reuse the kvcache
         with torch.no_grad():
-            y = self._model(x, use_cache=True, past_key_values=self._kv_cache).logits.argmax(dim=2)
+            output: CausalLMOutputWithPast = self._model(x, use_cache=True, past_key_values=self._kv_cache)
+            y = output.logits.argmax(dim=2)
+            self._kv_cache = output.past_key_values
+        # print("current kv_cache shape:", self._kv_cache.shape)
 
         n = prefix_len - 1
         flag = False
@@ -248,6 +252,7 @@ class AsyncServer:
             ts = 0
 
             banned: Dict[int, bool] = {}
+            self._kv_cache = None
             async for data in ws:
                 msg = load_ws_msg(data)
                 print("receive drafted length:", msg.prefix_len)
