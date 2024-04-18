@@ -117,13 +117,12 @@ class AsyncClient:
                 if msg.flag:
                     # wrong prediction, require drawback
                     self.contexts[cid].ids = msg.ids.to(self.model.device, non_blocking=True)
-                    self.contexts[cid].len_verified = self.contexts[cid].ids.shape[1]
+                    self.contexts[cid].len_drafted = msg.ids.shape[1]
                     self.contexts[cid].time_stamp += 1
                     
                     # TODO: check if non_blocking works
                     print("drawback!")
-                else:
-                    self.contexts[cid].len_verified = self.contexts[cid].ids.shape[1]
+                self.contexts[cid].len_verified = msg.ids.shape[1]
                 print("verified: ", self.contexts[cid].len_verified)
             except asyncio.exceptions.CancelledError:
                 break
@@ -172,20 +171,23 @@ class AsyncClient:
             ctx = self.contexts[cid]
             x = self.contexts[cid].ids
             cur_len = x.shape[1]
-            print("current len:", cur_len, "verified len:", ctx.len_verified)
 
-            if cur_len == ctx.len_drafted and cur_len != ctx.len_drafted:
-                print("drafted current len, skipped")
+            if cur_len == max_len:
+                # print("reach maximal length, skipped")
                 continue
 
-            x = self.model.generate(x, max_length = cur_len + gamma)
+            print("max_len:", max_len, "current len:", cur_len, "verified len:", ctx.len_verified, "drafted len:", ctx.len_drafted)
+
+            delta = min(gamma, max_len - cur_len)
+
+            x = self.model.generate(x, max_length = cur_len + delta)
 
             asyncio.create_task(
                 self._async_spec_from_server(
                     client,
                     x,
                     cur_len,
-                    gamma,
+                    delta,
                     time_stamp = self.contexts[cid].time_stamp
                 )
             )
@@ -219,7 +221,7 @@ class AsyncServer:
             y = self._model(x).logits.argmax(dim=2)
 
         n = prefix_len - 1
-        flag = True
+        flag = False
 
         for _ in range(gamma):
             if y[0][n] == x[0][n + 1]:
@@ -228,7 +230,7 @@ class AsyncServer:
             else:
                 # reject
                 print(f"reject {n + 1}")
-                flag = False
+                flag = True
                 x[0][n + 1] = y[0][n]
                 break
 
