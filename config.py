@@ -10,3 +10,4 @@ WS_SERVER_ADDR = _env("WS_SERVER_ADDR", "127.0.0.1")
 WS_SERVER_PORT = _env("WS_SERVER_PORT", "2333")
 
 MODEL_ZOO_DIR = _env("MODEL_ZOO_DIR", "/home/share")
+MODEL_NAME = _env("MODEL", "opt-125m")

@@ -6,6 +6,7 @@ import functools
 import config
 import logging
 import websockets
+import time
 
 from transformers.models.opt import OPTModel
 from transformers.modeling_outputs import CausalLMOutputWithPast
@@ -15,6 +16,7 @@ from websockets import WebSocketClientProtocol as WSClient, WebSocketServerProto
 from concurrent.futures import ThreadPoolExecutor
 from typing import Optional, Dict, Callable, List, Tuple
 from dataclasses import dataclass
+from remote.utils import timer, get_timer_stats, update_timer
 
 
 uuid_counter = 0
@@ -51,10 +53,11 @@ def load_ws_msg(data) -> WsMsg:
 
 
 async def copy_gpu2cpu(x: torch.Tensor) -> torch.Tensor:
+    # TODO: mark with events
+    return x.cpu()
     x_cpu = x.to("cpu", non_blocking = True)
     stream = torch.cuda.current_stream(x.device)
     stream.synchronize()
-    # TODO: 
     return x_cpu
 
 
@@ -63,15 +66,57 @@ async def dump_ws_msg(flag: bool,
                       x: Optional[torch.Tensor],
                       prefix_len: Optional[int] = None,
                       gamma: Optional[int] = None) -> bytes:
-    print("dumping data")
     if x is not None and x.device.type != "cpu":
         y = await copy_gpu2cpu(x)
         msg = WsMsg(flag, y, prefix_len, gamma, time_stamp)
     else:
         msg = WsMsg(flag, x, prefix_len, gamma, time_stamp)
     data = pickle.dumps(msg)
-    print("dumped data")
     return data
+
+
+class AsyncStreamer:
+
+    def __init__(self, 
+                 cur_len: int, 
+                 ws_client: WSClient, 
+                 parent: "AsyncClient",
+                 loop: asyncio.BaseEventLoop,
+                 step: int = 1) -> None:
+        self.cur_len = cur_len
+        self.ws_client = ws_client
+        self.parent = parent
+        self.loop = loop
+        self.step = step
+
+        self.sequences: Optional[torch.Tensor] = None
+
+    def _add_token(self, token: torch.Tensor):
+        if self.sequences is None:
+            self.sequences = token.reshape([token.shape[0], 1, token.shape[1]])
+        else:
+            self.sequences = torch.cat([self.sequences, token[:, None]], dim=-1)
+
+    def put(self, token: torch.Tensor):
+        self._add_token(token)
+        if self.sequences.shape[1] == self.step:
+            self.parent._async_spec_from_server(
+                self.client,
+
+            )
+            self.sequences = None
+            
+        
+        # self._async_spec_from_server(
+        #     client,
+        #     x,
+        #     cur_len,
+        #     delta,
+        #     time_stamp = self.contexts[cid].time_stamp
+        # )
+
+    def end(self):
+        pass
 
 
 class AsyncWrapper:
@@ -140,25 +185,26 @@ class AsyncClient:
             await self._async_block_decoding(cid, client)
             coro.cancel()
 
-    async def _async_spec_from_server(self, 
-                                      client: WSClient,
-                                      x: torch.Tensor,
-                                      prefix_len: int,
-                                      gamma: int,
-                                      time_stamp: int):
-        try:
-            await client.send(
-                await dump_ws_msg(
-                    flag = False,
-                    time_stamp = time_stamp,
-                    x = x,
-                    prefix_len = prefix_len,
-                    gamma = gamma
+    def _async_spec_from_server(self, 
+                                client: WSClient,
+                                x: torch.Tensor,
+                                prefix_len: int,
+                                gamma: int,
+                                time_stamp: int):
+        async def _spec_internal():
+            try:
+                await client.send(
+                    await dump_ws_msg(
+                        flag = False,
+                        time_stamp = time_stamp,
+                        x = x,
+                        prefix_len = prefix_len,
+                        gamma = gamma
+                    )
                 )
-            )
-        except websockets.exceptions.ConnectionClosedOK:
-            pass
-            
+            except websockets.exceptions.ConnectionClosedOK:
+                pass
+        asyncio.create_task(_spec_internal())
 
     async def _async_block_decoding(self, 
                                     cid: int,
@@ -167,7 +213,18 @@ class AsyncClient:
         max_len = ctx.ids.shape[1] + ctx.max_len
         gamma = ctx.gamma
 
+        self._async_spec_from_server(
+            client=client,
+            x=ctx.ids,
+            prefix_len=ctx.ids.shape[1],
+            gamma=ctx.ids.shape[1],
+            time_stamp=-1
+        )
+
         print("before:", ctx)
+        timer(None)
+
+        st = time.time()
 
         while self.contexts[cid].len_verified < max_len:
             await asyncio.sleep(0)  # yield to other coroutine, may retreat
@@ -177,28 +234,32 @@ class AsyncClient:
 
             if cur_len == max_len:
                 # print("reach maximal length, skipped")
+                if st != 0:
+                    update_timer("draft_done", time.time() - st)
+                st = 0
                 continue
 
             print("max_len:", max_len, "current len:", cur_len, "verified len:", ctx.len_verified, "drafted len:", ctx.len_drafted)
 
             delta = min(gamma, max_len - cur_len)
 
+            timer("idle")
             x = self.model.generate(x, max_length = cur_len + delta)
+            timer("generate")
 
-            asyncio.create_task(
-                self._async_spec_from_server(
-                    client,
-                    x,
-                    cur_len,
-                    delta,
-                    time_stamp = self.contexts[cid].time_stamp
-                )
+            self._async_spec_from_server(
+                client,
+                x,
+                cur_len,
+                delta,
+                time_stamp = self.contexts[cid].time_stamp
             )
 
             self.contexts[cid].ids = x
             self.contexts[cid].len_drafted = x.shape[1]
 
         print("after:", self.contexts[cid])
+        print(get_timer_stats())
 
 
 class AsyncServer:
@@ -218,9 +279,12 @@ class AsyncServer:
     def spec_tokens(self, msg: WsMsg):
         print("spec_tokens len:", msg.prefix_len)
         x, prefix_len, gamma = msg.ids, msg.prefix_len, msg.gamma
+        x_pre = x[..., : x.shape[1] - gamma]
+        x = x[..., x.shape[1] - gamma:]
+
         if x.device != self._model.device:
             x = x.to(self._model.device)
-
+        
         # TODO: reuse the kvcache
         with torch.no_grad():
             output: CausalLMOutputWithPast = self._model(x, use_cache=True, past_key_values=self._kv_cache)
@@ -228,28 +292,31 @@ class AsyncServer:
             self._kv_cache = output.past_key_values
         # print("current kv_cache shape:", self._kv_cache.shape)
 
-        n = prefix_len - 1
-        flag = False
+        if msg.time_stamp >= 0:
+            n = 0
+            flag = False
 
-        for _ in range(gamma):
-            if y[0][n] == x[0][n + 1]:
-                # accept, and update n
-                n += 1
-            else:
-                # reject
-                print(f"reject {n + 1}")
-                flag = True
-                x[0][n + 1] = y[0][n]
-                break
+            for _ in range(gamma):
+                if y[0][n] == x[0][n]:
+                    # accept, and update n
+                    n += 1
+                else:
+                    # reject
+                    print(f"reject {n}")
+                    flag = True
+                    x[0][n] = y[0][n]
+                    break
+        else:
+            n = x.shape[1]
 
-        ids = x[:, :n + 2].to('cpu')
+        ids = torch.concat([x_pre, x[:, :n].to('cpu')], dim=1)
         return flag, ids
 
     async def _run_server_internal(self):
         self._server_stop_flag = asyncio.get_event_loop().create_future()
 
         async def server_handler(ws: WSServer):
-            ts = 0
+            ts = -1e100
 
             banned: Dict[int, bool] = {}
             self._kv_cache = None

@@ -32,7 +32,7 @@ class ClientModel:
         
     def generate(self, prompt:str, max_len:int=50, num_return_sequences:int=1)->str:
         input_ids = self._tokenizer.encode(prompt, return_tensors='pt').to(self._device)
-        output = self._model.generate(input_ids, max_length=max_len, num_return_sequences=num_return_sequences)
+        output = self._model.generate(input_ids, max_length=max_len, num_return_sequences=num_return_sequences, eos_token_id=self._tokenizer.eos_token_id)
         generated_text = self._tokenizer.decode(output[0], skip_special_tokens=True)
         return generated_text
     
@@ -178,15 +178,16 @@ class ClientModel:
         return processed_tensor
     
 # model_name = "bigscience/bloom-560m"
-model_name = os.path.join(config.MODEL_ZOO_DIR, "opt-125m")
+model_name = os.path.join(config.MODEL_ZOO_DIR, config.MODEL_NAME)
 # server_url = "http://202.205.2.250:5000"
 server_url = f"ws://{config.WS_SERVER_ADDR}:{config.WS_SERVER_PORT}"
-prompts = "How do you think the weather today?"
+prompts = "Here is a brief introduction to Peking University:"
 
 model = ClientModel(server_url=server_url, 
                     model_name=model_name)
 st = time()
-print(model.generate_with_server(prompts, strategy="async"))
+print(model.generate_with_server(prompts, strategy="async", gamma=8, max_len=32))
+# print(model.generate(prompts, max_len = len(prompts) + 128))
 ed = time() - st
 
 stats = get_timer_stats()
