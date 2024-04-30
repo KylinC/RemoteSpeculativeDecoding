@@ -10,7 +10,7 @@ import time
 
 from transformers.models.opt import OPTModel
 from transformers.modeling_outputs import CausalLMOutputWithPast
-from transformers import AutoModelForCausalLM, AutoTokenizer
+from transformers import AutoModelForCausalLM, AutoTokenizer, GenerationConfig
 
 from websockets import WebSocketClientProtocol as WSClient, WebSocketServerProtocol as WSServer, connect, serve
 from concurrent.futures import ThreadPoolExecutor
@@ -292,10 +292,9 @@ class AsyncServer:
             self._kv_cache = output.past_key_values
         # print("current kv_cache shape:", self._kv_cache.shape)
 
+        n = 0
+        flag = False
         if msg.time_stamp >= 0:
-            n = 0
-            flag = False
-
             for _ in range(gamma):
                 if y[0][n] == x[0][n]:
                     # accept, and update n

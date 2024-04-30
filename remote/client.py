@@ -5,6 +5,7 @@ import tqdm
 import asyncio
 import config
 import os
+import transformers
 
 from transformers import AutoTokenizer, AutoModelForCausalLM
 from transformers.models.opt import OPTForCausalLM
@@ -22,7 +23,8 @@ class ClientModel:
         self.server_url = server_url
         self._device = 'cuda' if torch.cuda.is_available() else 'cpu'
         logging.info("begin load models")
-        self._model: OPTForCausalLM = AutoModelForCausalLM.from_pretrained(model_name, trust_remote_code=True).to(self._device)
+        self._model: OPTForCausalLM = AutoModelForCausalLM.from_pretrained(model_name, trust_remote_code=True, torch_dtype=torch.float32)
+        self._model = self._model.to(self._device)
         self._tokenizer = AutoTokenizer.from_pretrained(model_name)
         logging.info("fininsh load models")
         
